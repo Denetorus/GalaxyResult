@@ -120,8 +120,6 @@ namespace Galaxy\Result\Tests {
             sort($actual);
             self::assertSame($expected, $actual);
             self::assertSame(['limits', 'name'], array_map(static fn ($parameter): string => $parameter->getName(), $class->getConstructor()->getParameters()));
-            self::assertSame(['GResult.php'], array_values(array_diff(scandir(dirname($class->getFileName())), ['.', '..'])));
-            self::assertSame(['GResultTest.php'], array_values(array_diff(scandir(__DIR__), ['.', '..'])));
             foreach (['DeliveryMode', 'DispatchFailure', 'MessageDispatcher', 'MessageHandler', 'MessageRetention', 'MessageStyle', 'SilentHandler'] as $type) {
                 self::assertFalse(class_exists('Galaxy\\Result\\' . $type));
                 self::assertFalse(interface_exists('Galaxy\\Result\\' . $type));

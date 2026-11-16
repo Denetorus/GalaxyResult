@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  development:
+    runs-on: ubuntu-latest
+    env:
+      COMPOSER_AUTH: '{}'
+    steps:
+      - name: Set development paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "COMPOSER_HOME=$RUNNER_TEMP/development-home" >> "$GITHUB_ENV"
+          echo "COMPOSER_CACHE_DIR=$RUNNER_TEMP/development-cache" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
+        with:
+          php-version: '8.4'
+          tools: composer:2.11.2
+          coverage: none
+      - run: composer --no-plugins --no-scripts validate --strict
+      - run: composer install --no-interaction --no-plugins --no-scripts --prefer-dist --no-progress
+      - run: php vendor/bin/phpunit --configuration phpunit.xml --fail-on-warning --fail-on-deprecation --fail-on-phpunit-warning --fail-on-phpunit-deprecation --display-all-issues
+
+  consumer:
+    runs-on: ubuntu-latest
+    env:
+      COMPOSER_AUTH: '{}'
+    steps:
+      - name: Set consumer paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "CONSUMER_ROOT=$RUNNER_TEMP/galaxy-result-consumer" >> "$GITHUB_ENV"
+          echo "COMPOSER_HOME=$RUNNER_TEMP/consumer-home" >> "$GITHUB_ENV"
+          echo "COMPOSER_CACHE_DIR=$RUNNER_TEMP/consumer-cache" >> "$GITHUB_ENV"
+          echo "COMPOSER_VENDOR_DIR=$RUNNER_TEMP/galaxy-result-consumer/vendor" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
+        with:
+          php-version: '8.4'
+          tools: composer:2.11.2
+          coverage: none
+      - name: Create consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir "$CONSUMER_ROOT"
+          php <<'PHP'
+          <?php
+          $manifest = [
+              'name' => 'galaxy-result-check/consumer',
+              'repositories' => [[
+                  'type' => 'path',
+                  'url' => getenv('GITHUB_WORKSPACE'),
+                  'options' => ['symlink' => false, 'versions' => ['denetorus/galaxy-result' => 'dev-ci']],
+              ]],
+              'require' => ['denetorus/galaxy-result' => 'dev-ci'],
+              'config' => ['allow-plugins' => false],
+          ];
+          file_put_contents(getenv('CONSUMER_ROOT') . '/composer.json', json_encode($manifest, JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR));
+          PHP
+      - name: Install consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$CONSUMER_ROOT"
+          composer install --no-dev --no-interaction --no-plugins --no-scripts --prefer-dist --no-progress
+      - name: Verify mirror and behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$CONSUMER_ROOT"
+          php <<'PHP'
+          <?php
+          require getenv('CONSUMER_ROOT') . '/vendor/autoload.php';
+          use Galaxy\Result\GResult;
+          $metadata = json_decode(file_get_contents(getenv('CONSUMER_ROOT') . '/vendor/composer/installed.json'), true, 512, JSON_THROW_ON_ERROR);
+          $names = array_column($metadata['packages'], 'name');
+          if ($names !== ['denetorus/galaxy-result'] || $metadata['dev'] !== false) {
+              throw new RuntimeException('Unexpected installed packages');
+          }
+          $mirror = getenv('CONSUMER_ROOT') . '/vendor/denetorus/galaxy-result';
+          $file = (new ReflectionClass(GResult::class))->getFileName();
+          if (is_link($mirror) || realpath($file) !== realpath($mirror . '/src/GResult.php')) {
+              throw new RuntimeException('Unexpected autoload location');
+          }
+          if (hash_file('sha256', $file) !== hash_file('sha256', getenv('GITHUB_WORKSPACE') . '/src/GResult.php')) {
+              throw new RuntimeException('Source hash mismatch');
+          }
+          $source = new GResult(name: 'Source');
+          $source->setData('processed', 2);
+          if ($source->getData('processed') !== 2 || $source->getCode() !== 0) {
+              throw new RuntimeException('Unexpected source data');
+          }
+          $uid = $source->addError(2, 'Import interrupted');
+          $receiver = new GResult(name: 'Receiver');
+          $receiver->copyErrorsFrom($source);
+          $entry = $receiver->getEntry($uid);
+          if ($receiver->getCode() !== 2 || $entry['uid'] !== $uid || $entry['originPath'] !== 'Receiver->Source') {
+              throw new RuntimeException('Unexpected copied error');
+          }
+          echo "Consumer smoke passed\n";
+          PHP
