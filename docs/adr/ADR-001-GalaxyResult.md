@@ -1,14 +1,16 @@
 # ADR-001 — GalaxyResult
 
-**Статус: Accepted.**
+[Русский](ADR-001-GalaxyResult.ru.md)
 
-## Назначение
+**Status Accepted.**
 
-GalaxyResult — самостоятельная библиотека PHP 8.4+ для накопления структурированного результата операции. Пакет denetorus/galaxy-result использует PSR-4 Galaxy\Result и требует только PHP для исполнения. GResult хранит имя, данные и три коллекции записей. Форматирование и доставка относятся к вызывающему приложению или внешним компонентам.
+## Purpose
 
-## Публичный API
+GalaxyResult is a standalone PHP 8.4+ library for accumulating a structured operation result. The denetorus/galaxy-result package uses PSR-4 Galaxy\Result and requires only PHP at runtime. GResult holds a name, data and three entry collections. Formatting and delivery belong to the calling application or external components.
 
-Тип self означает GResult. Категория записи определяется коллекцией.
+## Public API
+
+The self type means GResult. An entry's category is determined by its collection.
 
     __construct(array $limits = [], ?string $name = null)
     getName(): string
@@ -41,20 +43,20 @@ GalaxyResult — самостоятельная библиотека PHP 8.4+ д
     copyWarningsFrom(self $source, bool $clearSource = false): self
     copyErrorsFrom(self $source, bool $clearSource = false): self
 
-Имя неизменяемо. Явное имя сохраняется дословно. При null используется класс ближайшего внешнего вызывающего кадра, полученного без аргументов и объектов, либо GResult. Повторная инициализация, нативное клонирование и сериализация закрыты.
+The name is immutable. An explicit name is preserved verbatim. For null, the class of the nearest external caller frame obtained without arguments or objects is used, falling back to GResult. Reinitialization, native cloning and serialization are disabled.
 
-## Данные и лимиты
+## Data and limits
 
-Допустимы null, bool, int, конечный float, string и массивы этих значений. Типы, ключи и порядок сохраняются. Ссылки изолируются на входе и при выдаче снимков. Циклы и недопустимые значения отклоняются атомарно. hasData различает отсутствующий ключ и явный null. Для отсутствующего ключа getData выбрасывает OutOfBoundsException. dataRevision начинается с нуля и меняется только при фактическом изменении данных, включая порядок массива и знак нуля. Записи не меняют эту ревизию. copyDataFrom объединяет верхний уровень, значения источника заменяют одноимённые значения получателя. Целочисленные ключи не перенумеровываются. Подготовка получателя, очистки источника и обеих ревизий предшествует публикации. Самокопирование отклоняется.
+Allowed values are null, bool, int, finite float, string and arrays of these values. Types, keys and order are preserved. References are isolated on input and when returning snapshots. Cycles and invalid values are rejected atomically. hasData distinguishes a missing key from an explicit null. For a missing key, getData throws OutOfBoundsException. dataRevision starts at zero and changes only when data actually changes, including array order and the sign of zero. Entries do not change this revision. copyDataFrom merges the top level, with source values replacing receiver values under matching keys. Integer keys are preserved without renumbering. Preparation of the receiver, source clearing and both revisions precedes publication. Self-copy is rejected.
 
-Лимиты принимают известные положительные int. Defaults: maxDepth=32, maxValueNodes=100000, maxStringBytes=16777216, maxEntries=4096. Снимок данных имеет отдельный бюджет от суммарного снимка трёх коллекций. maxEntries применяется суммарно к записям. Глубина начинается с нуля для данных и каждого context. Бюджеты учитывают логические узлы, строковые ключи и значения, включая развёрнутые ссылки и поля записи. Проверка полного кандидата предшествует мутации.
+Limits accept known positive int values. Defaults are maxDepth=32, maxValueNodes=100000, maxStringBytes=16777216, maxEntries=4096. The data snapshot has a separate budget from the combined snapshot of the three collections. maxEntries applies to the total number of entries. Depth starts at zero for data and for each context. Budgets count logical nodes, string keys and values, including expanded references and entry fields. The complete candidate is validated before mutation.
 
-## Записи и итог операции
+## Entries and operation outcome
 
-Messages, warnings, errors упорядочены по добавлению. Снимки индексируются по UID. Запись состоит из uid, originPath, text, code, context. UID — 32 строчных шестнадцатеричных символа из 16 случайных байтов. Коллизия отклоняется атомарно. originPath новой записи равен имени результата. updateEntry принимает text, context и для warnings/errors code. UID, категория, позиция и originPath сохраняются. Неизвестный UID при чтении или обновлении даёт OutOfBoundsException. Удаление отсутствующего или принадлежащего другой коллекции UID возвращает false.
+Messages, warnings and errors are ordered by insertion. Snapshots are indexed by UID. Each entry consists of uid, originPath, text, code and context. A UID is 32 lowercase hexadecimal characters generated from 16 random bytes. A collision is rejected atomically. A new entry's originPath equals the result's name. updateEntry accepts text, context and, for warnings/errors, code. UID, category, position and originPath are preserved. Reading or updating an unknown UID throws OutOfBoundsException. Removing a missing UID or a UID belonging to another collection returns false.
 
-Message имеет code=null. Для добавления warning/error и смены их кода требуется положительный int от 1. Ноль и отрицательные значения выбрасывают InvalidArgumentException до мутации. isSuccess соответствует пустой коллекции errors. getCode возвращает код первой текущей ошибки либо 0 при отсутствии ошибок. Предупреждения не меняют итог. Вызывающий владеет реестром и трактовкой кодов. Исключения GResult не создают записи. Код результата отделён от OS exit и HTTP status.
+A message has code=null. Adding a warning/error or changing its code requires a positive int of at least 1. Zero and negative values throw InvalidArgumentException before mutation. isSuccess corresponds to an empty errors collection. getCode returns the first current error's code, or 0 when there are no errors. Warnings leave the outcome unchanged. The caller owns the code registry and interpretation. GResult exceptions do not create entries. The result code is separate from OS exit and HTTP status.
 
-## Явное копирование записей
+## Explicit entry copying
 
-Copy дописывает выбранную коллекцию в порядке источника, сохраняет UID и отделяет значения. Каждый originPath получает префикс имени получателя и '->'. Самокопирование, коллизия UID в любой коллекции получателя и отказ валидации или лимитов отклоняют операцию целиком. При clearSource=true удаление выбранной коллекции источника публикуется после успешной подготовки обеих сторон. При false источник сохраняется.
+Copy appends the selected collection in source order, preserves UIDs and detaches values. Each originPath receives a prefix consisting of the receiver's name and '->'. Self-copy, a UID collision in any receiver collection, and validation or limit failures reject the entire operation. With clearSource=true, removal of the selected source collection is published after both sides have been successfully prepared. With false, the source is preserved.

@@ -1,14 +1,16 @@
 # GalaxyResult
 
-Самостоятельная библиотека PHP 8.4+ для накопления результата операции. Пакет `denetorus/galaxy-result` использует PSR-4 и пространство имён `Galaxy\Result`. Для работы библиотеки достаточно PHP.
+[Русский](README.ru.md)
 
-`GResult` хранит имя, данные и упорядоченные коллекции сообщений, предупреждений и ошибок. Записи можно явно копировать между результатами. Код результата берётся из первой текущей ошибки либо равен `0`, если ошибок нет. Предупреждения не меняют итог операции. Оформление и доставка принадлежат вызывающему приложению или внешним компонентам.
+A standalone PHP 8.4+ library for accumulating an operation result. The `denetorus/galaxy-result` package uses PSR-4 and the `Galaxy\Result` namespace. Only PHP is required at runtime.
 
-Полный контракт описан в [ADR-001](docs/adr/ADR-001-GalaxyResult.md).
+`GResult` holds a name, data and ordered collections of messages, warnings and errors. Entries can be explicitly copied between results. The result code is the first current error's code, or `0` when there are no errors. Warnings leave the operation outcome unchanged. Formatting and delivery belong to the calling application or external components.
+
+The full contract is defined in [ADR-001](docs/adr/ADR-001-GalaxyResult.md).
 
 ## Getting Started
 
-Создайте `composer.json` приложения:
+Create the application's `composer.json`:
 
 ```json
 {
@@ -19,14 +21,14 @@
         }
     ],
     "require": {
-        "denetorus/galaxy-result": "dev-master"
+        "denetorus/galaxy-result": "0.1.0"
     }
 }
 ```
 
-Выполните `composer install`. Версия `dev-master` следует за веткой `master`, а `composer.lock` фиксирует выбранную ревизию.
+Run `composer install`. The `0.1.0` constraint selects the published `v0.1.0` tag, and `composer.lock` records the selected revision.
 
-Сохраните следующий PHP-файл рядом с каталогом `vendor` и запустите его:
+Save the following PHP file beside the `vendor` directory and run it:
 
 ```php
 <?php
@@ -42,7 +44,7 @@ if ($source->getData('processed') !== 2) {
 }
 echo $source->getCode(), PHP_EOL; // 0
 
-$uid = $source->addError(2, 'Импорт прерван');
+$uid = $source->addError(2, 'Import interrupted');
 $receiver = new GResult(name: 'Receiver');
 $receiver->copyErrorsFrom($source);
 $entry = $receiver->getEntry($uid);
@@ -52,20 +54,20 @@ if ($entry['uid'] !== $uid || $entry['originPath'] !== 'Receiver->Source') {
 echo $receiver->getCode(), PHP_EOL; // 2
 ```
 
-`hasData()` различает отсутствующий ключ и существующий `null`. Для существующего `null` метод `getData()` возвращает `null`. Чтение отсутствующего ключа или UID выбрасывает `OutOfBoundsException`.
+`hasData()` distinguishes a missing key from an existing `null`. For an existing `null`, `getData()` returns `null`. Reading a missing key or UID throws `OutOfBoundsException`.
 
-Данные и context принимают plain values — `null`, bool, int, конечный float, string и массивы этих значений. Ссылки изолируются на входе и при выдаче снимков. Данные имеют отдельный бюджет лимитов от суммарного бюджета трёх коллекций записей. При нарушении типа или лимита операция отклоняется атомарно, сохраняя предыдущее состояние.
+Data and context accept plain values — `null`, bool, int, finite float, string and arrays of these values. References are isolated on input and when returning snapshots. Data has a separate limit budget from the combined budget of the three entry collections. A type or limit violation rejects the operation atomically, preserving the previous state.
 
-Коды предупреждений и ошибок должны быть положительными целыми числами. Код `<= 0` вызывает `InvalidArgumentException`. Самокопирование и коллизия UID при копировании вызывают `LogicException`. Копирование сохраняет UID и добавляет имя получателя к `originPath`.
+Warning and error codes must be positive integers. A code `<= 0` causes `InvalidArgumentException`. Self-copy and a UID collision during copying cause `LogicException`. Copying preserves UIDs and prefixes `originPath` with the receiver's name.
 
-## Тесты
+## Tests
 
-После установки dev-зависимостей командой `composer install` выполните из корня пакета:
+After installing development dependencies with `composer install`, run from the package root:
 
 ```text
 php vendor/bin/phpunit --configuration phpunit.xml
 ```
 
-## Лицензирование
+## License
 
-Библиотека распространяется по лицензии MIT. См. [LICENSE](LICENSE).
+The library is distributed under the MIT license. See [LICENSE](LICENSE).
