@@ -10,23 +10,13 @@ The full contract is defined in [ADR-001](docs/adr/ADR-001-GalaxyResult.md).
 
 ## Getting Started
 
-Create the application's `composer.json`:
+From your application directory, install the package from Packagist using PHP 8.4+:
 
-```json
-{
-    "repositories": [
-        {
-            "type": "vcs",
-            "url": "https://github.com/Denetorus/GalaxyResult.git"
-        }
-    ],
-    "require": {
-        "denetorus/galaxy-result": "0.1.0"
-    }
-}
+```text
+composer require denetorus/galaxy-result:0.1.0
 ```
 
-Run `composer install`. The `0.1.0` constraint selects the published `v0.1.0` tag, and `composer.lock` records the selected revision.
+The `0.1.0` constraint selects the published version, and `composer.lock` records the selected revision. Load `vendor/autoload.php` in your application.
 
 Save the following PHP file beside the `vendor` directory and run it:
 

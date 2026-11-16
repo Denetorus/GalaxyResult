@@ -10,23 +10,13 @@
 
 ## Getting Started
 
-Создайте `composer.json` приложения:
+Из каталога приложения установите пакет из Packagist с PHP 8.4+:
 
-```json
-{
-    "repositories": [
-        {
-            "type": "vcs",
-            "url": "https://github.com/Denetorus/GalaxyResult.git"
-        }
-    ],
-    "require": {
-        "denetorus/galaxy-result": "0.1.0"
-    }
-}
+```text
+composer require denetorus/galaxy-result:0.1.0
 ```
 
-Выполните `composer install`. Требование `0.1.0` выбирает опубликованную версию тега `v0.1.0`, а `composer.lock` фиксирует выбранную ревизию.
+Требование `0.1.0` выбирает опубликованную версию, а `composer.lock` фиксирует выбранную ревизию. Подключите `vendor/autoload.php` в приложении.
 
 Сохраните следующий PHP-файл рядом с каталогом `vendor` и запустите его:
 
