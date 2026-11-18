@@ -16,6 +16,7 @@ The self type means GResult. An entry's category is determined by its collection
     getName(): string
     isSuccess(): bool
     getCode(): int
+    getConsoleCode(): int
     hasData(string $key): bool
     getData(string $key): mixed
     getAllData(): array
@@ -27,7 +28,7 @@ The self type means GResult. An entry's category is determined by its collection
     copyDataFrom(self $source, bool $clearSource = false): self
     addMessage(string $text, array $context = []): string
     addWarning(int $code, string $text, array $context = []): string
-    addError(int $code, string $text, array $context = []): string
+    addError(int $code, string $text, array $context = [], int $consoleCode = 1): string
     getMessages(): array
     getWarnings(): array
     getErrors(): array
@@ -53,10 +54,56 @@ Limits accept known positive int values. Defaults are maxDepth=32, maxValueNodes
 
 ## Entries and operation outcome
 
-Messages, warnings and errors are ordered by insertion. Snapshots are indexed by UID. Each entry consists of uid, originPath, text, code and context. A UID is 32 lowercase hexadecimal characters generated from 16 random bytes. A collision is rejected atomically. A new entry's originPath equals the result's name. updateEntry accepts text, context and, for warnings/errors, code. UID, category, position and originPath are preserved. Reading or updating an unknown UID throws OutOfBoundsException. Removing a missing UID or a UID belonging to another collection returns false.
+Messages, warnings and errors are ordered by insertion. Snapshots are indexed by UID. Messages and warnings contain uid, originPath, text, code and context. Errors contain these fields followed by consoleCode. A UID is 32 lowercase hexadecimal characters generated from 16 random bytes. A collision is rejected atomically. A new entry's originPath equals the result's name. updateEntry accepts text, context and, for warnings/errors, code. For errors it also accepts consoleCode. UID, category, position and originPath are preserved. Reading or updating an unknown UID throws OutOfBoundsException. Removing a missing UID or a UID belonging to another collection returns false.
 
-A message has code=null. Adding a warning/error or changing its code requires a positive int of at least 1. Zero and negative values throw InvalidArgumentException before mutation. isSuccess corresponds to an empty errors collection. getCode returns the first current error's code, or 0 when there are no errors. Warnings leave the outcome unchanged. The caller owns the code registry and interpretation. GResult exceptions do not create entries. The result code is separate from OS exit and HTTP status.
+A message has code=null. Adding a warning/error or changing its code requires a positive int of at least 1. Zero and negative values throw InvalidArgumentException before mutation. isSuccess corresponds to an empty errors collection. getCode returns the first current error's code, or 0 when there are no errors. Warnings leave the outcome unchanged. The caller owns the code registry and interpretation. GResult exceptions do not create entries. getCode is a business code. The calling CLI adapter explicitly assigns its console status through consoleCode. HTTP mapping belongs to the caller.
 
 ## Explicit entry copying
 
 Copy appends the selected collection in source order, preserves UIDs and detaches values. Each originPath receives a prefix consisting of the receiver's name and '->'. Self-copy, a UID collision in any receiver collection, and validation or limit failures reject the entire operation. With clearSource=true, removal of the selected source collection is published after both sides have been successfully prepared. With false, the source is preserved.
+
+## Accepted consoleCode amendment and publication boundary
+
+This section describes the accepted local GF-0013 implementation. The published `0.1.0` contract is preserved by its tag and Release. The new `consoleCode` API becomes available through Packagist after a future release whose version must be approved separately.
+
+```text
+addError(int $code, string $text, array $context = [], int $consoleCode = 1): string
+getConsoleCode(): int
+```
+
+The optional final parameter preserves earlier positional and named `addError` calls. Only error snapshots gain a sixth field, in the order `uid`, `originPath`, `text`, `code`, `context`, `consoleCode`. Messages and warnings retain five fields.
+
+`consoleCode` is an integer from 1 to 255, defaulting to 1. `getCode()` returns the business code of the first current error, and `getConsoleCode()` returns the console code of that same error. Both return 0 when errors are empty. `isSuccess()` depends on the errors collection. Removing or clearing errors updates both aggregates consistently. Updating only `consoleCode` preserves the business code, entry collection, UID, order, originPath and `dataRevision`.
+
+Adding an out-of-range console code throws `InvalidArgumentException` before mutation. The native `int` parameter follows the calling PHP code's strictness rules. `updateEntry()` accepts `consoleCode` only for errors and requires an actual `int` in range, without coercion. Invalid values or composite updates throw `InvalidArgumentException` atomically, preserving the complete previous state.
+
+`copyErrorsFrom()` preserves both codes and UIDs and prefixes `originPath` with the receiver's name. The receiver and any `clearSource` transition are fully prepared and checked against limits before either side is published. The new field consumes a value node and its key consumes string bytes in the shared entry budget, so entries near the previous limits may exceed it. Data and its revision have their independent rules.
+
+The calling CLI adapter explicitly supplies the console status it owns. GRouter integration remains a separate stage. For the current local implementation after installing its development dependencies, save this example under `docs-verification/` in the checkout and run it. It prints `1001`, `3` and `false`, then verifies the copied codes, UID and `Receiver->Source` origin.
+
+```php
+<?php
+
+declare(strict_types=1);
+
+require dirname(__DIR__) . '/vendor/autoload.php';
+
+use Galaxy\Result\GResult;
+
+$source = new GResult(name: 'Source');
+$uid = $source->addError(code: 1001, text: 'Command failed.', consoleCode: 3);
+if ($source->getCode() !== 1001 || $source->getConsoleCode() !== 3 || $source->isSuccess() !== false) {
+    throw new RuntimeException('Unexpected source codes');
+}
+echo $source->getCode(), PHP_EOL;
+echo $source->getConsoleCode(), PHP_EOL;
+echo json_encode($source->isSuccess(), JSON_THROW_ON_ERROR), PHP_EOL;
+
+$receiver = new GResult(name: 'Receiver');
+$receiver->copyErrorsFrom($source);
+$entry = $receiver->getEntry($uid);
+if ($receiver->getCode() !== 1001 || $receiver->getConsoleCode() !== 3 || $receiver->isSuccess() !== false
+    || $entry['uid'] !== $uid || $entry['originPath'] !== 'Receiver->Source') {
+    throw new RuntimeException('Unexpected copied error');
+}
+```

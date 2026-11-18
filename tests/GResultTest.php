@@ -50,7 +50,7 @@ namespace Galaxy\Result\Tests {
         {
             return [$result->getName(), $result->getAllData(), $result->getDataRevision(),
                 $result->getMessages(), $result->getWarnings(), $result->getErrors(),
-                $result->isSuccess(), $result->getCode()];
+                $result->isSuccess(), $result->getCode(), $result->getConsoleCode()];
         }
 
         private function rejects(GResult $result, callable $action, string $exception = InvalidArgumentException::class, ?GResult $source = null): void
@@ -110,7 +110,7 @@ namespace Galaxy\Result\Tests {
         {
             $class = new ReflectionClass(GResult::class);
             self::assertTrue($class->isFinal());
-            $expected = ['__construct', '__serialize', '__unserialize', 'getName', 'isSuccess', 'getCode',
+            $expected = ['__construct', '__serialize', '__unserialize', 'getName', 'isSuccess', 'getCode', 'getConsoleCode',
                 'hasData', 'getData', 'getAllData', 'getDataRevision', 'setData', 'replaceData', 'removeData',
                 'clearData', 'copyDataFrom', 'addMessage', 'addWarning', 'addError', 'getMessages', 'getWarnings',
                 'getErrors', 'getEntry', 'updateEntry', 'removeMessage', 'removeWarning', 'removeError',
@@ -582,6 +582,166 @@ namespace Galaxy\Result\Tests {
             $property->setValue($source, $entries);
             $receiver = new GResult();
             $this->rejects($receiver, static fn () => $receiver->copyMessagesFrom($source, true), source: $source);
+        }
+        public function testConsoleCodeDefaultsSignatureAndErrorShape(): void
+        {
+            $method = new ReflectionMethod(GResult::class, 'addError');
+            self::assertSame(['code', 'text', 'context', 'consoleCode'], array_map(static fn ($parameter) => $parameter->getName(), $method->getParameters()));
+            self::assertSame('int', (string) $method->getParameters()[3]->getType());
+            self::assertSame(1, $method->getParameters()[3]->getDefaultValue());
+            self::assertSame('int', (string) (new ReflectionMethod(GResult::class, 'getConsoleCode'))->getReturnType());
+            $result = new GResult(name: 'Source');
+            self::assertSame(0, $result->getConsoleCode());
+            $message = $result->addMessage('message');
+            $warning = $result->addWarning(1001, 'warning');
+            self::assertTrue($result->isSuccess());
+            self::assertSame([0, 0], [$result->getCode(), $result->getConsoleCode()]);
+            foreach ([$message, $warning] as $uid) {
+                self::assertSame(['uid', 'originPath', 'text', 'code', 'context'], array_keys($result->getEntry($uid)));
+            }
+            $first = $result->addError(1001, 'old positional', ['v' => 1]);
+            self::assertSame(1, $result->getEntry($first)['consoleCode']);
+            $second = $result->addError(code: 2002, text: 'old named', context: []);
+            self::assertSame(1, $result->getEntry($second)['consoleCode']);
+            $third = $result->addError(code: 3003, text: 'new named', consoleCode: 255);
+            self::assertSame(['uid' => $third, 'originPath' => 'Source', 'text' => 'new named', 'code' => 3003, 'context' => [], 'consoleCode' => 255], $result->getEntry($third));
+            self::assertSame([1001, 1], [$result->getCode(), $result->getConsoleCode()]);
+        }
+
+        public static function invalidConsoleCodes(): iterable
+        {
+            foreach ([0, -1, 256, PHP_INT_MIN, PHP_INT_MAX] as $code) {
+                yield (string) $code => [$code];
+            }
+        }
+
+        #[DataProvider('invalidConsoleCodes')]
+        public function testConsoleCodeRangeFailuresAreAtomic(int $code): void
+        {
+            $result = new GResult(name: 'R');
+            $result->setData('keep', true);
+            $result->addMessage('message');
+            $result->addWarning(7, 'warning');
+            $uid = $result->addError(1001, 'original', ['v' => 'original'], 3);
+            $this->rejects($result, static fn () => $result->addError(2002, 'bad', [], $code));
+            $this->rejects($result, static fn () => $result->updateEntry($uid, ['text' => 'candidate', 'code' => 2002, 'context' => ['v' => 'changed'], 'consoleCode' => $code]));
+            self::assertSame([1001, 3], [$result->getCode(), $result->getConsoleCode()]);
+        }
+
+        public function testConsoleCodeTypesAndStrictCaller(): void
+        {
+            $result = new GResult();
+            $uid = $result->addError(1001, 'original', [], 3);
+            foreach (['3', 3.0, true, null, [], new \stdClass()] as $value) {
+                $this->rejects($result, static fn () => $result->addError(1001, 'strict', [], $value), \TypeError::class);
+                $this->rejects($result, static fn () => $result->updateEntry($uid, ['text' => 'candidate', 'consoleCode' => $value]));
+            }
+            $weakCaller = eval('declare(strict_types=0); return static function (\\Galaxy\\Result\\GResult $result): string { return $result->addError(1001, "weak", [], "3"); };');
+            $weakUid = $weakCaller($result);
+            self::assertSame(3, $result->getEntry($weakUid)['consoleCode']);
+        }
+
+        public function testConsoleCodeUpdatesRemovalAndClearFollowTheFirstError(): void
+        {
+            $result = new GResult();
+            $result->setData('keep', ['value' => true]);
+            $first = $result->addError(1001, 'first', [], 3);
+            $second = $result->addError(2002, 'second', [], 255);
+            $third = $result->addError(3003, 'third', [], 1);
+            self::assertSame([1001, 3], [$result->getCode(), $result->getConsoleCode()]);
+            $result->updateEntry($second, ['consoleCode' => 7]);
+            self::assertSame([1001, 3], [$result->getCode(), $result->getConsoleCode()]);
+            $result->updateEntry($first, ['code' => 4004, 'consoleCode' => 255, 'text' => 'changed', 'context' => ['ok' => true]]);
+            self::assertSame([4004, 255], [$result->getCode(), $result->getConsoleCode()]);
+            self::assertSame([$first, $second, $third], array_keys($result->getErrors()));
+            $this->rejects($result, static fn () => $result->updateEntry($first, ['consoleCode' => 1, 'code' => 0]));
+            $result->removeError($third);
+            self::assertSame([4004, 255], [$result->getCode(), $result->getConsoleCode()]);
+            $result->removeError($first);
+            self::assertSame([2002, 7], [$result->getCode(), $result->getConsoleCode()]);
+            $result->removeError($second);
+            self::assertSame([0, 0], [$result->getCode(), $result->getConsoleCode()]);
+            self::assertTrue($result->isSuccess());
+            $result->addError(1001, 'clear', [], 3);
+            $result->clearErrors();
+            self::assertSame([0, 0], [$result->getCode(), $result->getConsoleCode()]);
+            self::assertTrue($result->isSuccess());
+            self::assertSame(['keep' => ['value' => true]], $result->getAllData());
+            self::assertSame(1, $result->getDataRevision());
+        }
+
+        public function testConsoleCodeIsRejectedOnOtherCollections(): void
+        {
+            $result = new GResult();
+            foreach ([$result->addMessage('message'), $result->addWarning(1, 'warning')] as $uid) {
+                $this->rejects($result, static fn () => $result->updateEntry($uid, ['text' => 'candidate', 'consoleCode' => 1]));
+            }
+        }
+
+        public function testConsoleCodeCopyPreservesCodesOrderAndDetachedContext(): void
+        {
+            foreach ([false, true] as $clear) {
+                $source = new GResult(name: 'Source');
+                $receiver = new GResult(name: 'Receiver');
+                $value = 'original';
+                $first = $source->addError(1001, 'first', ['v' => &$value], 3);
+                $second = $source->addError(2002, 'second', [], 255);
+                $source->setData('keep', 1);
+                $receiver->setData('keep', 2);
+                self::assertSame($receiver, $receiver->copyErrorsFrom($source, $clear));
+                self::assertSame([$first, $second], array_keys($receiver->getErrors()));
+                self::assertSame([1001, 3], [$receiver->getCode(), $receiver->getConsoleCode()]);
+                self::assertSame([2002, 255], [$receiver->getEntry($second)['code'], $receiver->getEntry($second)['consoleCode']]);
+                self::assertSame('Receiver->Source', $receiver->getEntry($first)['originPath']);
+                self::assertSame($first, $receiver->getEntry($first)['uid']);
+                $value = 'outside';
+                $snapshot = $receiver->getErrors();
+                $snapshot[$first]['context']['v'] = 'snapshot';
+                self::assertSame('original', $receiver->getEntry($first)['context']['v']);
+                self::assertSame($clear ? [0, 0] : [1001, 3], [$source->getCode(), $source->getConsoleCode()]);
+                self::assertSame($clear, $source->isSuccess());
+                if (!$clear) {
+                    $source->updateEntry($first, ['context' => ['v' => 'source'], 'consoleCode' => 7]);
+                    self::assertSame(3, $receiver->getEntry($first)['consoleCode']);
+                    self::assertSame('original', $receiver->getEntry($first)['context']['v']);
+                }
+                self::assertSame([1, 1], [$source->getDataRevision(), $receiver->getDataRevision()]);
+                self::assertSame([['keep' => 1], ['keep' => 2]], [$source->getAllData(), $receiver->getAllData()]);
+            }
+        }
+
+        public function testConsoleCodeConsumesNodeAndStringBudgetsAtomically(): void
+        {
+            $nodes = new GResult(['maxValueNodes' => 10], 'S');
+            $this->rejects($nodes, static fn () => $nodes->addError(1001, '', [], 3));
+            $nodes->addWarning(1, '');
+            $exactNodes = new GResult(['maxValueNodes' => 11], 'S');
+            $exactNodes->replaceData(array_fill(0, 10, null));
+            $uid = $exactNodes->addError(1001, '', [], 3);
+            $this->rejects($exactNodes, static fn () => $exactNodes->updateEntry($uid, ['consoleCode' => 255, 'context' => [null]]));
+            self::assertSame(1, $exactNodes->getDataRevision());
+            $bytes = new GResult(['maxStringBytes' => 125], 'S');
+            $this->rejects($bytes, static fn () => $bytes->addError(1001, '', [], 3));
+            $bytes->addWarning(1, '');
+            $exactBytes = new GResult(['maxStringBytes' => 126], 'S');
+            $uid = $exactBytes->addError(1001, '', [], 3);
+            $this->rejects($exactBytes, static fn () => $exactBytes->updateEntry($uid, ['consoleCode' => 255, 'text' => 'x']));
+            foreach ([false, true] as $clear) {
+                foreach ([['maxValueNodes' => 10], ['maxStringBytes' => 128], ['maxEntries' => 1]] as $limits) {
+                    $source = new GResult(name: 'S');
+                    $source->addError(1001, '', [], 3);
+                    $receiver = new GResult($limits, 'R');
+                    if (isset($limits['maxEntries'])) {
+                        $receiver->addMessage('full');
+                    }
+                    $this->rejects($receiver, static fn () => $receiver->copyErrorsFrom($source, $clear), source: $source);
+                }
+                $source = new GResult(name: 'S');
+                $source->addError(1001, '', [], 3);
+                $receiver = new GResult(['maxValueNodes' => 11, 'maxStringBytes' => 129], 'R');
+                $receiver->copyErrorsFrom($source, $clear);
+                self::assertSame(3, $receiver->getConsoleCode());
+            }
         }
     }
 }

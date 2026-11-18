@@ -67,6 +67,15 @@ final class GResult
         return 0;
     }
 
+    public function getConsoleCode(): int
+    {
+        foreach ($this->entries['errors'] as $entry) {
+            return $entry['consoleCode'];
+        }
+
+        return 0;
+    }
+
     public function hasData(string $key): bool
     {
         return array_key_exists($key, $this->data);
@@ -160,9 +169,9 @@ final class GResult
         return $this->appendEntry('warnings', $code, $text, $context);
     }
 
-    public function addError(int $code, #[\SensitiveParameter] string $text, #[\SensitiveParameter] array $context = []): string
+    public function addError(int $code, #[\SensitiveParameter] string $text, #[\SensitiveParameter] array $context = [], int $consoleCode = 1): string
     {
-        return $this->appendEntry('errors', $code, $text, $context);
+        return $this->appendEntry('errors', $code, $text, $context, $consoleCode);
     }
 
     public function getMessages(): array
@@ -194,6 +203,7 @@ final class GResult
                 'text' => is_string($value),
                 'context' => is_array($value),
                 'code' => $collection !== 'messages' && is_int($value) && $value > 0,
+                'consoleCode' => $collection === 'errors' && is_int($value) && $value >= 1 && $value <= 255,
                 default => false,
             };
             if (!$valid) {
@@ -264,9 +274,13 @@ final class GResult
         ?int $code,
         #[\SensitiveParameter] string $text,
         #[\SensitiveParameter] array $context,
+        ?int $consoleCode = null,
     ): string {
         if ($code !== null && $code < 1) {
             throw new InvalidArgumentException('Warning and error codes must be positive integers.');
+        }
+        if ($consoleCode !== null && ($consoleCode < 1 || $consoleCode > 255)) {
+            throw new InvalidArgumentException('Console codes must be integers from 1 to 255.');
         }
         $uid = bin2hex(random_bytes(16));
         foreach ($this->entries as $records) {
@@ -282,6 +296,9 @@ final class GResult
             'code' => $code,
             'context' => $context,
         ];
+        if ($consoleCode !== null) {
+            $replacement[$collection][$uid]['consoleCode'] = $consoleCode;
+        }
         $this->entries = $this->entriesSnapshot($replacement);
 
         return $uid;

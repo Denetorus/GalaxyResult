@@ -16,6 +16,7 @@ GalaxyResult — самостоятельная библиотека PHP 8.4+ д
     getName(): string
     isSuccess(): bool
     getCode(): int
+    getConsoleCode(): int
     hasData(string $key): bool
     getData(string $key): mixed
     getAllData(): array
@@ -27,7 +28,7 @@ GalaxyResult — самостоятельная библиотека PHP 8.4+ д
     copyDataFrom(self $source, bool $clearSource = false): self
     addMessage(string $text, array $context = []): string
     addWarning(int $code, string $text, array $context = []): string
-    addError(int $code, string $text, array $context = []): string
+    addError(int $code, string $text, array $context = [], int $consoleCode = 1): string
     getMessages(): array
     getWarnings(): array
     getErrors(): array
@@ -53,10 +54,56 @@ GalaxyResult — самостоятельная библиотека PHP 8.4+ д
 
 ## Записи и итог операции
 
-Messages, warnings, errors упорядочены по добавлению. Снимки индексируются по UID. Запись состоит из uid, originPath, text, code, context. UID — 32 строчных шестнадцатеричных символа из 16 случайных байтов. Коллизия отклоняется атомарно. originPath новой записи равен имени результата. updateEntry принимает text, context и для warnings/errors code. UID, категория, позиция и originPath сохраняются. Неизвестный UID при чтении или обновлении даёт OutOfBoundsException. Удаление отсутствующего или принадлежащего другой коллекции UID возвращает false.
+Messages, warnings, errors упорядочены по добавлению. Снимки индексируются по UID. Сообщения и предупреждения содержат uid, originPath, text, code, context. Ошибки содержат эти поля и затем consoleCode. UID — 32 строчных шестнадцатеричных символа из 16 случайных байтов. Коллизия отклоняется атомарно. originPath новой записи равен имени результата. updateEntry принимает text, context и для warnings/errors code. Для errors также принимается consoleCode. UID, категория, позиция и originPath сохраняются. Неизвестный UID при чтении или обновлении даёт OutOfBoundsException. Удаление отсутствующего или принадлежащего другой коллекции UID возвращает false.
 
-Message имеет code=null. Для добавления warning/error и смены их кода требуется положительный int от 1. Ноль и отрицательные значения выбрасывают InvalidArgumentException до мутации. isSuccess соответствует пустой коллекции errors. getCode возвращает код первой текущей ошибки либо 0 при отсутствии ошибок. Предупреждения не меняют итог. Вызывающий владеет реестром и трактовкой кодов. Исключения GResult не создают записи. Код результата отделён от OS exit и HTTP status.
+Message имеет code=null. Для добавления warning/error и смены их кода требуется положительный int от 1. Ноль и отрицательные значения выбрасывают InvalidArgumentException до мутации. isSuccess соответствует пустой коллекции errors. getCode возвращает код первой текущей ошибки либо 0 при отсутствии ошибок. Предупреждения не меняют итог. Вызывающий владеет реестром и трактовкой кодов. Исключения GResult не создают записи. getCode — бизнес-код. Вызывающий CLI-адаптер явно задаёт свой консольный статус через consoleCode. Отображение HTTP принадлежит вызывающему коду.
 
 ## Явное копирование записей
 
 Copy дописывает выбранную коллекцию в порядке источника, сохраняет UID и отделяет значения. Каждый originPath получает префикс имени получателя и '->'. Самокопирование, коллизия UID в любой коллекции получателя и отказ валидации или лимитов отклоняют операцию целиком. При clearSource=true удаление выбранной коллекции источника публикуется после успешной подготовки обеих сторон. При false источник сохраняется.
+
+## Принятая поправка consoleCode и граница публикации
+
+Этот раздел описывает принятую локальную реализацию GF-0013. Контракт опубликованной `0.1.0` сохранён её тегом и Release. Новый API `consoleCode` станет доступен через Packagist после будущего выпуска, версию которого нужно утвердить отдельно.
+
+```text
+addError(int $code, string $text, array $context = [], int $consoleCode = 1): string
+getConsoleCode(): int
+```
+
+Последний необязательный параметр сохраняет прежние позиционные и именованные вызовы `addError`. Только снимки ошибок получают шестое поле в порядке `uid`, `originPath`, `text`, `code`, `context`, `consoleCode`. Сообщения и предупреждения сохраняют пять полей.
+
+`consoleCode` — целое число от 1 до 255, default 1. `getCode()` возвращает бизнес-код первой текущей ошибки, а `getConsoleCode()` — консольный код той же ошибки. При пустых errors оба возвращают 0. `isSuccess()` зависит от коллекции errors. Удаление и очистка ошибок согласованно меняют оба агрегата. Изменение только `consoleCode` сохраняет бизнес-код, коллекцию записи, UID, порядок, originPath и `dataRevision`.
+
+Добавление консольного кода вне диапазона выбрасывает `InvalidArgumentException` до мутации. Нативный параметр `int` следует правилам strictness вызывающего PHP-кода. `updateEntry()` принимает `consoleCode` только для errors и требует настоящий `int` в диапазоне без преобразования. Неверные значения и составные правки выбрасывают `InvalidArgumentException` атомарно с сохранением полного прежнего состояния.
+
+`copyErrorsFrom()` сохраняет оба кода и UID и добавляет к `originPath` имя получателя. Получатель и переход при `clearSource` полностью подготавливаются и проверяются по лимитам до публикации любой стороны. Новое поле расходует узел значения, а его ключ расходует строковые байты общего бюджета записей, поэтому записи возле прежних границ могут превысить лимит. Данные и их ревизия сохраняют независимые правила.
+
+Вызывающий CLI-адаптер явно задаёт принадлежащий ему консольный статус. Интеграция GRouter остаётся отдельным этапом. Для текущей локальной реализации после установки её dev-зависимостей сохраните этот пример в `docs-verification/` внутри checkout и запустите. Он выводит `1001`, `3` и `false`, затем проверяет скопированные коды, UID и происхождение `Receiver->Source`.
+
+```php
+<?php
+
+declare(strict_types=1);
+
+require dirname(__DIR__) . '/vendor/autoload.php';
+
+use Galaxy\Result\GResult;
+
+$source = new GResult(name: 'Source');
+$uid = $source->addError(code: 1001, text: 'Command failed.', consoleCode: 3);
+if ($source->getCode() !== 1001 || $source->getConsoleCode() !== 3 || $source->isSuccess() !== false) {
+    throw new RuntimeException('Unexpected source codes');
+}
+echo $source->getCode(), PHP_EOL;
+echo $source->getConsoleCode(), PHP_EOL;
+echo json_encode($source->isSuccess(), JSON_THROW_ON_ERROR), PHP_EOL;
+
+$receiver = new GResult(name: 'Receiver');
+$receiver->copyErrorsFrom($source);
+$entry = $receiver->getEntry($uid);
+if ($receiver->getCode() !== 1001 || $receiver->getConsoleCode() !== 3 || $receiver->isSuccess() !== false
+    || $entry['uid'] !== $uid || $entry['originPath'] !== 'Receiver->Source') {
+    throw new RuntimeException('Unexpected copied error');
+}
+```
